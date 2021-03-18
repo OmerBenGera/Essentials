@@ -2,6 +2,7 @@ package com.earth2me.essentials;
 
 import com.google.common.io.Files;
 import net.ess3.api.InvalidWorldException;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.OfflinePlayer;
@@ -43,7 +44,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -54,7 +54,7 @@ public class EssentialsConf extends YamlConfiguration {
     protected static final Charset UTF8 = StandardCharsets.UTF_8;
     private static final ExecutorService EXECUTOR_SERVICE = Executors.newSingleThreadExecutor();
     protected final File configFile;
-    private final AtomicInteger pendingDiskWrites = new AtomicInteger(0);
+    private Future<?> writeTask = null;
     private final AtomicBoolean transaction = new AtomicBoolean(false);
     private final byte[] bytebuffer = new byte[1024];
     protected String templateName = null;
@@ -78,7 +78,7 @@ public class EssentialsConf extends YamlConfiguration {
     }
 
     public synchronized void load() {
-        if (pendingDiskWrites.get() != 0) {
+        if (writeTask != null) {
             LOGGER.log(Level.INFO, "File {0} not read, because it''s not yet written to disk.", configFile);
             return;
         }
@@ -290,15 +290,10 @@ public class EssentialsConf extends YamlConfiguration {
             throw new IllegalArgumentException("File cannot be null");
         }
 
-        final String data = saveToString();
+        if(writeTask == null)
+            writeTask = EXECUTOR_SERVICE.submit(new WriteRunner());
 
-        if (data.length() == 0) {
-            return null;
-        }
-
-        pendingDiskWrites.incrementAndGet();
-
-        return EXECUTOR_SERVICE.submit(new WriteRunner(configFile, data, pendingDiskWrites));
+        return writeTask;
     }
 
     public boolean hasProperty(final String path) {
@@ -619,28 +614,21 @@ public class EssentialsConf extends YamlConfiguration {
         super.set(path, value);
     }
 
-    private static final class WriteRunner implements Runnable {
-        private final File configFile;
-        private final String data;
-        private final AtomicInteger pendingDiskWrites;
+    @Override
+    public String saveToString() {
+        Bukkit.broadcastMessage(Bukkit.isPrimaryThread() + "");
+        return super.saveToString();
+    }
 
-        private WriteRunner(final File configFile, final String data, final AtomicInteger pendingDiskWrites) {
-            this.configFile = configFile;
-            this.data = data;
-            this.pendingDiskWrites = pendingDiskWrites;
+    private final class WriteRunner implements Runnable {
+
+        private WriteRunner() {
         }
 
         @Override
         public void run() {
             //long startTime = System.nanoTime();
             synchronized (configFile) {
-                if (pendingDiskWrites.get() > 1) {
-                    // Writes can be skipped, because they are stored in a queue (in the executor).
-                    // Only the last is actually written.
-                    pendingDiskWrites.decrementAndGet();
-                    //LOGGER.log(Level.INFO, configFile + " skipped writing in " + (System.nanoTime() - startTime) + " nsec.");
-                    return;
-                }
                 try {
                     Files.createParentDirs(configFile);
 
@@ -659,14 +647,14 @@ public class EssentialsConf extends YamlConfiguration {
 
                     try (final FileOutputStream fos = new FileOutputStream(configFile)) {
                         try (final OutputStreamWriter writer = new OutputStreamWriter(fos, UTF8)) {
-                            writer.write(data);
+                            writer.write(saveToString());
                         }
                     }
                 } catch (final IOException e) {
                     LOGGER.log(Level.SEVERE, e.getMessage(), e);
                 } finally {
                     //LOGGER.log(Level.INFO, configFile + " written to disk in " + (System.nanoTime() - startTime) + " nsec.");
-                    pendingDiskWrites.decrementAndGet();
+                    writeTask = null;
                 }
             }
         }
