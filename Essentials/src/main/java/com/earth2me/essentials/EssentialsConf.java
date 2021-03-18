@@ -2,10 +2,8 @@ package com.earth2me.essentials;
 
 import com.google.common.io.Files;
 import net.ess3.api.InvalidWorldException;
-import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
-import org.bukkit.OfflinePlayer;
 import org.bukkit.Server;
 import org.bukkit.World;
 import org.bukkit.configuration.ConfigurationSection;
@@ -13,7 +11,6 @@ import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.util.Vector;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -44,6 +41,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -55,6 +54,7 @@ public class EssentialsConf extends YamlConfiguration {
     private static final ExecutorService EXECUTOR_SERVICE = Executors.newSingleThreadExecutor();
     protected final File configFile;
     private Future<?> writeTask = null;
+    private final ReadWriteLock lock = new ReentrantReadWriteLock();
     private final AtomicBoolean transaction = new AtomicBoolean(false);
     private final byte[] bytebuffer = new byte[1024];
     protected String templateName = null;
@@ -262,7 +262,7 @@ public class EssentialsConf extends YamlConfiguration {
     }
 
     @Override
-    public synchronized void save(final File file) throws IOException {
+    public void save(final File file) throws IOException {
         if (!transaction.get()) {
             delayedSave(file);
         }
@@ -270,7 +270,7 @@ public class EssentialsConf extends YamlConfiguration {
 
     //This may be aborted if there are stagnant requests sitting in queue.
     //This needs fixed to discard outstanding save requests.
-    public synchronized void forceSave() {
+    public void forceSave() {
         try {
             final Future<?> future = delayedSave(configFile);
             if (future != null) {
@@ -281,7 +281,7 @@ public class EssentialsConf extends YamlConfiguration {
         }
     }
 
-    public synchronized void cleanup() {
+    public void cleanup() {
         forceSave();
     }
 
@@ -343,6 +343,11 @@ public class EssentialsConf extends YamlConfiguration {
          */
     }
 
+    public BigDecimal getBigDecimal(final String path, final BigDecimal def) {
+        final String input = super.getString(path);
+        return toBigDecimal(input, def);
+    }
+
     public void setProperty(final String path, final ItemStack stack) {
         final Map<String, Object> map = new HashMap<>();
         map.put("type", stack.getType().toString());
@@ -386,238 +391,55 @@ public class EssentialsConf extends YamlConfiguration {
     }
 
     @Override
-    public synchronized Object get(final String path) {
-        return super.get(path);
+    public Object get(final String path, final Object def) {
+        // There's no need to wrap each get method, and they are all calling this method at the end.
+        // Therefore, by wrapping this method with our lock, we make sure all get methods are safe to use.
+        try {
+            lock.readLock().lock();
+            return super.get(path, def);
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     @Override
-    public synchronized Object get(final String path, final Object def) {
-        return super.get(path, def);
-    }
-
-    public synchronized BigDecimal getBigDecimal(final String path, final BigDecimal def) {
-        final String input = super.getString(path);
-        return toBigDecimal(input, def);
-    }
-
-    @Override
-    public synchronized boolean getBoolean(final String path) {
-        return super.getBoolean(path);
+    public Set<String> getKeys(final boolean deep) {
+        try {
+            lock.readLock().lock();
+            return super.getKeys(deep);
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     @Override
-    public synchronized boolean getBoolean(final String path, final boolean def) {
-        return super.getBoolean(path, def);
+    public Map<String, Object> getValues(final boolean deep) {
+        try {
+            lock.readLock().lock();
+            return super.getValues(deep);
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     @Override
-    public synchronized List<Boolean> getBooleanList(final String path) {
-        return super.getBooleanList(path);
-    }
-
-    @Override
-    public synchronized List<Byte> getByteList(final String path) {
-        return super.getByteList(path);
-    }
-
-    @Override
-    public synchronized List<Character> getCharacterList(final String path) {
-        return super.getCharacterList(path);
-    }
-
-    @Override
-    public synchronized ConfigurationSection getConfigurationSection(final String path) {
-        return super.getConfigurationSection(path);
-    }
-
-    @Override
-    public synchronized double getDouble(final String path) {
-        return super.getDouble(path);
-    }
-
-    @Override
-    public synchronized double getDouble(final String path, final double def) {
-        return super.getDouble(path, def);
-    }
-
-    @Override
-    public synchronized List<Double> getDoubleList(final String path) {
-        return super.getDoubleList(path);
-    }
-
-    @Override
-    public synchronized List<Float> getFloatList(final String path) {
-        return super.getFloatList(path);
-    }
-
-    @Override
-    public synchronized int getInt(final String path) {
-        return super.getInt(path);
-    }
-
-    @Override
-    public synchronized int getInt(final String path, final int def) {
-        return super.getInt(path, def);
-    }
-
-    @Override
-    public synchronized List<Integer> getIntegerList(final String path) {
-        return super.getIntegerList(path);
-    }
-
-    @Override
-    public synchronized ItemStack getItemStack(final String path, final ItemStack def) {
-        return super.getItemStack(path, def);
-    }
-
-    @Override
-    public synchronized Set<String> getKeys(final boolean deep) {
-        return super.getKeys(deep);
-    }
-
-    @Override
-    public synchronized List<?> getList(final String path) {
-        return super.getList(path);
-    }
-
-    @Override
-    public synchronized List<?> getList(final String path, final List<?> def) {
-        return super.getList(path, def);
-    }
-
-    @Override
-    public synchronized long getLong(final String path) {
-        return super.getLong(path);
-    }
-
-    @Override
-    public synchronized long getLong(final String path, final long def) {
-        return super.getLong(path, def);
-    }
-
-    @Override
-    public synchronized List<Long> getLongList(final String path) {
-        return super.getLongList(path);
-    }
-
-    public synchronized Map<String, Object> getMap() {
-        return map;
-    }
-
-    @Override
-    public synchronized List<Map<?, ?>> getMapList(final String path) {
-        return super.getMapList(path);
-    }
-
-    @Override
-    public synchronized OfflinePlayer getOfflinePlayer(final String path) {
-        return super.getOfflinePlayer(path);
-    }
-
-    @Override
-    public synchronized OfflinePlayer getOfflinePlayer(final String path, final OfflinePlayer def) {
-        return super.getOfflinePlayer(path, def);
-    }
-
-    @Override
-    public synchronized List<Short> getShortList(final String path) {
-        return super.getShortList(path);
-    }
-
-    @Override
-    public synchronized String getString(final String path) {
-        return super.getString(path);
-    }
-
-    @Override
-    public synchronized String getString(final String path, final String def) {
-        return super.getString(path, def);
-    }
-
-    @Override
-    public synchronized List<String> getStringList(final String path) {
-        return super.getStringList(path);
-    }
-
-    @Override
-    public synchronized Map<String, Object> getValues(final boolean deep) {
-        return super.getValues(deep);
-    }
-
-    @Override
-    public synchronized Vector getVector(final String path) {
-        return super.getVector(path);
-    }
-
-    @Override
-    public synchronized Vector getVector(final String path, final Vector def) {
-        return super.getVector(path, def);
-    }
-
-    @Override
-    public synchronized boolean isBoolean(final String path) {
-        return super.isBoolean(path);
-    }
-
-    @Override
-    public synchronized boolean isConfigurationSection(final String path) {
-        return super.isConfigurationSection(path);
-    }
-
-    @Override
-    public synchronized boolean isDouble(final String path) {
-        return super.isDouble(path);
-    }
-
-    @Override
-    public synchronized boolean isInt(final String path) {
-        return super.isInt(path);
-    }
-
-    @Override
-    public synchronized boolean isItemStack(final String path) {
-        return super.isItemStack(path);
-    }
-
-    @Override
-    public synchronized boolean isList(final String path) {
-        return super.isList(path);
-    }
-
-    @Override
-    public synchronized boolean isLong(final String path) {
-        return super.isLong(path);
-    }
-
-    @Override
-    public synchronized boolean isOfflinePlayer(final String path) {
-        return super.isOfflinePlayer(path);
-    }
-
-    @Override
-    public synchronized boolean isSet(final String path) {
-        return super.isSet(path);
-    }
-
-    @Override
-    public synchronized boolean isString(final String path) {
-        return super.isString(path);
-    }
-
-    @Override
-    public synchronized boolean isVector(final String path) {
-        return super.isVector(path);
-    }
-
-    @Override
-    public synchronized void set(final String path, final Object value) {
-        super.set(path, value);
+    public void set(final String path, final Object value) {
+        try {
+            lock.writeLock().lock();
+            super.set(path, value);
+        } finally {
+            lock.writeLock().unlock();
+        }
     }
 
     @Override
     public String saveToString() {
-        Bukkit.broadcastMessage(Bukkit.isPrimaryThread() + "");
-        return super.saveToString();
+        try {
+            lock.readLock().lock();
+            return super.saveToString();
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     private final class WriteRunner implements Runnable {
